@@ -40,6 +40,14 @@ class ErrorPair(BaseModel):
 class ErrorRequest(BaseModel):
     pairs: List[ErrorPair]
 
+def sorted_readings(readings):
+    rows = sorted(readings, key=lambda r: r.time_hours)
+    if len(rows) < 2:
+        raise HTTPException(status_code=400, detail="At least two readings are required.")
+    if any(rows[i].time_hours == rows[i-1].time_hours for i in range(1, len(rows))):
+        raise HTTPException(status_code=400, detail="Reading times must be unique.")
+    return rows
+
 @app.get("/")
 def root():
     return {"message": "AquaPredict API is running"}
