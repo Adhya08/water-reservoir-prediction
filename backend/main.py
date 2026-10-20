@@ -2,6 +2,7 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+import math
 
 app = FastAPI(title="AquaPredict API", version="1.0.0")
 
@@ -60,6 +61,20 @@ def interpolate_value(points, t):
         if t <= t2:
             return y1 + ((t - t1) / (t2 - t1)) * (y2 - y1)
     return points[-1][1]
+
+def rk4_step(t, h, dt, area, inflow_points, outflow_points):
+    # Time is measured in hours. Convert m^3/s to m^3/hour using 3600.
+    def f(time, level):
+        qin = interpolate_value(inflow_points, time)
+        qout = interpolate_value(outflow_points, time)
+        return ((qin - qout) * 3600.0) / area
+
+    k1 = f(t, h)
+    k2 = f(t + dt/2, h + dt*k1/2)
+    k3 = f(t + dt/2, h + dt*k2/2)
+    k4 = f(t + dt, h + dt*k3)
+    next_h = h + (dt/6.0) * (k1 + 2*k2 + 2*k3 + k4)
+    return next_h, {"k1": k1, "k2": k2, "k3": k3, "k4": k4}
 
 @app.get("/")
 def root():
