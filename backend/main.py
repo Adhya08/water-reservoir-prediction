@@ -48,6 +48,19 @@ def sorted_readings(readings):
         raise HTTPException(status_code=400, detail="Reading times must be unique.")
     return rows
 
+def interpolate_value(points, t):
+    """Piecewise-linear interpolation; hold the nearest endpoint outside the data range."""
+    if t <= points[0][0]:
+        return points[0][1]
+    if t >= points[-1][0]:
+        return points[-1][1]
+    for i in range(1, len(points)):
+        t1, y1 = points[i-1]
+        t2, y2 = points[i]
+        if t <= t2:
+            return y1 + ((t - t1) / (t2 - t1)) * (y2 - y1)
+    return points[-1][1]
+
 @app.get("/")
 def root():
     return {"message": "AquaPredict API is running"}
@@ -55,3 +68,24 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+@app.post("/interpolate")
+def interpolate(req: InterpolationRequest):
+    rows = sorted_readings(req.readings)
+    known = [(r.time_hours, r.level_m) for r in rows if r.level_m is not None]
+    if len(known) < 2:
+        raise HTTPException(status_code=400, detail="At least two known water-level readings are required.")
+    output = []
+    for r in rows:
+        estimated = r.level_m
+        was_estimated = False
+        if estimated is None:
+            estimated = interpolate_value(known, r.time_hours)
+            was_estimated = True
+        output.append({
+            "time_hours": r.time_hours,
+            "original_level_m": r.level_m,
+            "level_m": round(estimated, 6),
+            "estimated": was_estimated
+        })
+    return {"results": output, "method": "Linear interpolation"}
