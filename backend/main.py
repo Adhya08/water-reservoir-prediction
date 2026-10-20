@@ -89,3 +89,30 @@ def interpolate(req: InterpolationRequest):
             "estimated": was_estimated
         })
     return {"results": output, "method": "Linear interpolation"}
+
+@app.post("/integrate")
+def integrate(req: IntegrationRequest):
+    rows = sorted_readings(req.readings)
+    total_in = 0.0
+    total_out = 0.0
+    intervals = []
+    for i in range(1, len(rows)):
+        prev, cur = rows[i-1], rows[i]
+        dt_seconds = (cur.time_hours - prev.time_hours) * 3600.0
+        in_volume = dt_seconds * (prev.inflow_m3s + cur.inflow_m3s) / 2.0
+        out_volume = dt_seconds * (prev.outflow_m3s + cur.outflow_m3s) / 2.0
+        total_in += in_volume
+        total_out += out_volume
+        intervals.append({
+            "from_hours": prev.time_hours,
+            "to_hours": cur.time_hours,
+            "inflow_volume_m3": round(in_volume, 3),
+            "outflow_volume_m3": round(out_volume, 3),
+        })
+    return {
+        "method": "Composite trapezoidal rule",
+        "total_inflow_m3": round(total_in, 3),
+        "total_outflow_m3": round(total_out, 3),
+        "net_volume_change_m3": round(total_in-total_out, 3),
+        "intervals": intervals
+    }
