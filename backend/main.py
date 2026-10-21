@@ -163,3 +163,26 @@ def simulate(req: SimulationRequest):
         "assumption": "Constant reservoir surface area; flow rates are linearly interpolated between supplied readings and held constant beyond their endpoints.",
         "results": results
     }
+
+@app.post("/error-analysis")
+def error_analysis(req: ErrorRequest):
+    if not req.pairs:
+        raise HTTPException(status_code=400, detail="Add at least one actual/predicted pair.")
+    results = []
+    for p in req.pairs:
+        absolute = abs(p.actual_m - p.predicted_m)
+        percentage = None if p.actual_m == 0 else (absolute / abs(p.actual_m)) * 100
+        results.append({
+            "time_hours": p.time_hours,
+            "actual_m": p.actual_m,
+            "predicted_m": p.predicted_m,
+            "absolute_error_m": round(absolute, 6),
+            "percentage_error": None if percentage is None else round(percentage, 4)
+        })
+    mean_abs = sum(x["absolute_error_m"] for x in results) / len(results)
+    valid_pct = [x["percentage_error"] for x in results if x["percentage_error"] is not None]
+    return {
+        "results": results,
+        "mean_absolute_error_m": round(mean_abs, 6),
+        "mean_percentage_error": None if not valid_pct else round(sum(valid_pct)/len(valid_pct), 4)
+    }
