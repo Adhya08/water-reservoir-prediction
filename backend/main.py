@@ -131,3 +131,35 @@ def integrate(req: IntegrationRequest):
         "net_volume_change_m3": round(total_in-total_out, 3),
         "intervals": intervals
     }
+
+@app.post("/simulate")
+def simulate(req: SimulationRequest):
+    rows = sorted_readings(req.readings)
+    start = rows[0].time_hours
+    initial = req.initial_level_m
+    if initial is None:
+        first_known = next((r.level_m for r in rows if r.level_m is not None), None)
+        if first_known is None:
+            raise HTTPException(status_code=400, detail="Provide an initial level or at least one known level reading.")
+        initial = first_known
+
+    inflow_points = [(r.time_hours, r.inflow_m3s) for r in rows]
+    outflow_points = [(r.time_hours, r.outflow_m3s) for r in rows]
+    end = start + req.duration_hours
+    t, h = start, initial
+    results = [{"time_hours": round(t, 6), "level_m": round(h, 6), "k_values": None}]
+    while t < end - 1e-10:
+        dt = min(req.step_hours, end - t)
+        next_h, ks = rk4_step(t, h, dt, req.area_m2, inflow_points, outflow_points)
+        t += dt
+        h = next_h
+        results.append({
+            "time_hours": round(t, 6),
+            "level_m": round(h, 6),
+            "k_values": {k: round(v, 8) for k, v in ks.items()}
+        })
+    return {
+        "method": "Runge-Kutta Fourth Order (RK4)",
+        "assumption": "Constant reservoir surface area; flow rates are linearly interpolated between supplied readings and held constant beyond their endpoints.",
+        "results": results
+    }
