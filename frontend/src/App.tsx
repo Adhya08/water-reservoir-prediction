@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   LayoutDashboard, Database, TrendingUp, Calculator, ChartNoAxesCombined,
-  Bell, FileText, Droplets, Menu, X
+  Bell, FileText, Droplets, Play, Waves, Activity, AlertTriangle, CheckCircle2, Menu, X
 } from 'lucide-react'
 
 type Reading = { time_hours: number; level_m: number | null; inflow_m3s: number; outflow_m3s: number }
@@ -34,7 +34,35 @@ async function api(path: string, body: unknown) {
 
 export default function App() {
   const [active, setActive] = useState<NavKey>('Overview')
+  const [readings, setReadings] = useState<Reading[]>(initialReadings)
+  const [area, setArea] = useState(10000)
+  const [duration, setDuration] = useState(6)
+  const [step, setStep] = useState(1)
+  const [prediction, setPrediction] = useState<any>(null)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
   const [mobileOpen, setMobileOpen] = useState(false)
+
+  const validLevels = readings.filter(r => r.level_m !== null)
+  const currentLevel = validLevels.at(-1)?.level_m ?? 0
+  const latest = readings.at(-1)!
+  const storage = Math.max(0, Math.min(100, currentLevel / 60 * 100))
+  const allAlerts = [
+    ...(currentLevel < 20 ? ['Water level is below the configured minimum threshold.'] : []),
+    ...(currentLevel > 55 ? ['Water level is approaching the configured maximum threshold.'] : []),
+    ...(readings.some(r => r.level_m === null) ? ['One or more water-level readings are missing. Run interpolation.'] : []),
+    ...(latest.outflow_m3s > latest.inflow_m3s ? ['Outflow currently exceeds inflow; net storage is decreasing.'] : []),
+  ]
+
+  async function runAll() {
+    setBusy(true); setMessage('')
+    try {
+      const pred = await api('/simulate', { readings, area_m2: area, duration_hours: duration, step_hours: step })
+      setPrediction(pred)
+      setMessage('Calculations completed successfully.')
+    } catch (e: any) { setMessage(e.message || 'Could not complete calculations.') }
+    finally { setBusy(false) }
+  }
 
   const title = active
 
@@ -57,10 +85,36 @@ export default function App() {
         <div><span className="eyebrow">RESERVOIR MANAGEMENT / {active.toUpperCase()}</span><h1>{title}</h1></div>
         <div className="top-right"><span className="status-pill"><span className="online-dot"/> Demo mode</span><div className="avatar">AP</div></div>
       </header>
+      {message && <div className="toast"><span>{message}</span><button onClick={() => setMessage('')}>×</button></div>}
       <section className="page">
-        <div className="empty-state">Select a module from the workspace navigation.</div>
+        <PageHeading eyebrow="LIVE SIMULATION OVERVIEW" title="Reservoir overview" desc="A consolidated view of water levels, flow rates and calculated trends."
+          action={<button className="primary-btn" onClick={runAll} disabled={busy}><Play size={16}/>{busy ? 'Calculating…' : 'Run calculations'}</button>}/>
+        <div className="metric-grid">
+          <Metric label="Current water level" value={currentLevel.toFixed(2)} unit="m" icon={Waves} note="Latest known measurement"/>
+          <Metric label="Storage indicator" value={storage.toFixed(1)} unit="%" icon={Droplets} tone="teal" note="Illustrative 60 m reference"/>
+          <Metric label="Inflow rate" value={latest.inflow_m3s.toFixed(1)} unit="m³/s" icon={Activity} tone="green" note="Latest supplied reading"/>
+          <Metric label="Outflow rate" value={latest.outflow_m3s.toFixed(1)} unit="m³/s" icon={TrendingUp} tone="amber" note="Latest supplied reading"/>
+        </div>
+        <div className="grid-two">
+          <Panel title="Reservoir storage indicator" subtitle="Illustrative visual indicator; configure real capacity data for deployment">
+            <div className="storage-layout"><div className="tank"><div className="tank-water" style={{height:`${storage}%`}}/><span>{storage.toFixed(0)}%</span></div><div><div className="big-number">{currentLevel.toFixed(2)} m</div><p className="muted">Latest known water level</p><div className="legend-line"><i className="dot teal-dot"/> Simulated reservoir level</div></div></div>
+          </Panel>
+          <Panel title="System alerts" subtitle="Generated from the current dataset">
+            {allAlerts.length ? <div className="alert-list">{allAlerts.slice(0,4).map((a:string,i:number)=><div className="alert-row" key={i}><AlertTriangle size={17}/><span>{a}</span></div>)}</div> : <div className="empty-state"><CheckCircle2 size={25}/><b>No active alerts</b><span>Current readings do not trigger configured demo rules.</span></div>}
+          </Panel>
+        </div>
       </section>
       <footer className="footer">AquaPredict · Numerical Methods Project <span>Demo data only — not for operational dam control</span></footer>
     </main>
   </div>
+}
+
+function PageHeading({ eyebrow, title, desc, action }: any) {
+  return <div className="page-heading"><div><div className="eyebrow">{eyebrow}</div><h2>{title}</h2><p>{desc}</p></div>{action}</div>
+}
+function Metric({ label, value, unit, icon: Icon, tone = 'blue', note }: any) {
+  return <div className="metric-card"><div className={`metric-icon ${tone}`}><Icon size={19}/></div><div className="metric-label">{label}</div><div className="metric-value">{value}<small>{unit}</small></div><div className="metric-note">{note}</div></div>
+}
+function Panel({ title, subtitle, children, extra }: any) {
+  return <div className="panel"><div className="panel-head"><div><h3>{title}</h3>{subtitle && <p>{subtitle}</p>}</div>{extra}</div>{children}</div>
 }
