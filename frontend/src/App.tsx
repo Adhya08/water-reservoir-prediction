@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import {
   LayoutDashboard, Database, TrendingUp, Calculator, ChartNoAxesCombined,
-  Bell, FileText, Droplets, Play, Waves, Activity, AlertTriangle, CheckCircle2, Menu, X
+  Bell, FileText, Droplets, Upload, Play, Download, Plus,
+  Activity, Waves, AlertTriangle, CheckCircle2, Menu, X
 } from 'lucide-react'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -34,6 +35,14 @@ async function api(path: string, body: unknown) {
   const data = await response.json()
   if (!response.ok) throw new Error(data.detail || 'Request failed')
   return data
+}
+
+function downloadFile(filename: string, content: string, type = 'text/csv') {
+  const blob = new Blob([content], { type })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
 }
 
 export default function App() {
@@ -72,7 +81,45 @@ export default function App() {
     finally { setBusy(false) }
   }
 
+  function updateReading(index: number, field: keyof Reading, value: string) {
+    setReadings(old => old.map((r, i) => i !== index ? r : {
+      ...r, [field]: field === 'level_m' && value === '' ? null : Number(value)
+    }))
+  }
+
+  function addReading() {
+    const last = readings.at(-1)!
+    setReadings([...readings, { time_hours: last.time_hours + 1, level_m: null, inflow_m3s: last.inflow_m3s, outflow_m3s: last.outflow_m3s }])
+  }
+
+  function importCsv(file?: File) {
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const lines = String(reader.result).trim().split(/\r?\n/)
+        const parsed = lines.slice(1).filter(Boolean).map(line => {
+          const [time, level, inflow, outflow] = line.split(',').map(x => x.trim())
+          return { time_hours: Number(time), level_m: level === '' ? null : Number(level), inflow_m3s: Number(inflow), outflow_m3s: Number(outflow) }
+        })
+        if (!parsed.length || parsed.some(r => !Number.isFinite(r.time_hours + r.inflow_m3s + r.outflow_m3s))) throw new Error('Invalid CSV')
+        setReadings(parsed); setMessage(`Imported ${parsed.length} readings.`)
+      } catch { setMessage('CSV format must be: time_hours,level_m,inflow_m3s,outflow_m3s') }
+    }
+    reader.readAsText(file)
+  }
+
+  function exportReadings() {
+    const rows = ['time_hours,level_m,inflow_m3s,outflow_m3s', ...readings.map(r => `${r.time_hours},${r.level_m ?? ''},${r.inflow_m3s},${r.outflow_m3s}`)]
+    downloadFile('aquapredict-readings.csv', rows.join('\n'))
+  }
+
   const title = active
+  const pageContent = () => {
+    if (active === 'Overview') return <Overview currentLevel={currentLevel} storage={storage} latest={latest} chartData={chartData} prediction={prediction} alerts={allAlerts} onRun={runAll} busy={busy} />
+    if (active === 'Reservoir Data') return <DataPage readings={readings} onChange={updateReading} onAdd={addReading} onImport={importCsv} onExport={exportReadings} />
+    return <div className="empty-state">Module under development.</div>
+  }
 
   return <div className="app-shell">
     <aside className={`sidebar ${mobileOpen ? 'open' : ''}`}>
@@ -94,32 +141,7 @@ export default function App() {
         <div className="top-right"><span className="status-pill"><span className="online-dot"/> Demo mode</span><div className="avatar">AP</div></div>
       </header>
       {message && <div className="toast"><span>{message}</span><button onClick={() => setMessage('')}>×</button></div>}
-      <section className="page">
-        <PageHeading eyebrow="LIVE SIMULATION OVERVIEW" title="Reservoir overview" desc="A consolidated view of water levels, flow rates and calculated trends."
-          action={<button className="primary-btn" onClick={runAll} disabled={busy}><Play size={16}/>{busy ? 'Calculating…' : 'Run calculations'}</button>}/>
-        <div className="metric-grid">
-          <Metric label="Current water level" value={currentLevel.toFixed(2)} unit="m" icon={Waves} note="Latest known measurement"/>
-          <Metric label="Storage indicator" value={storage.toFixed(1)} unit="%" icon={Droplets} tone="teal" note="Illustrative 60 m reference"/>
-          <Metric label="Inflow rate" value={latest.inflow_m3s.toFixed(1)} unit="m³/s" icon={Activity} tone="green" note="Latest supplied reading"/>
-          <Metric label="Outflow rate" value={latest.outflow_m3s.toFixed(1)} unit="m³/s" icon={TrendingUp} tone="amber" note="Latest supplied reading"/>
-        </div>
-        <div className="grid-two">
-          <Panel title="Water level history" subtitle="Recorded readings; gaps remain visible">
-            <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="#e7edf2"/><XAxis dataKey="time"/><YAxis/><Tooltip/><Line dataKey="level" name="Water level (m)" stroke="#1686a5" strokeWidth={3} connectNulls={false} dot={{r:4}}/></LineChart></ResponsiveContainer></div>
-          </Panel>
-          <Panel title="Inflow vs outflow" subtitle="Flow rates in cubic metres per second">
-            <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="#e7edf2"/><XAxis dataKey="time"/><YAxis/><Tooltip/><Legend/><Bar dataKey="inflow" name="Inflow" fill="#159b8b" radius={[5,5,0,0]}/><Bar dataKey="outflow" name="Outflow" fill="#e4a34b" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></div>
-          </Panel>
-        </div>
-        <div className="grid-two">
-          <Panel title="Reservoir storage indicator" subtitle="Illustrative visual indicator; configure real capacity data for deployment">
-            <div className="storage-layout"><div className="tank"><div className="tank-water" style={{height:`${storage}%`}}/><span>{storage.toFixed(0)}%</span></div><div><div className="big-number">{currentLevel.toFixed(2)} m</div><p className="muted">Latest known water level</p><div className="legend-line"><i className="dot teal-dot"/> Simulated reservoir level</div></div></div>
-          </Panel>
-          <Panel title="System alerts" subtitle="Generated from the current dataset">
-            {allAlerts.length ? <div className="alert-list">{allAlerts.slice(0,4).map((a:string,i:number)=><div className="alert-row" key={i}><AlertTriangle size={17}/><span>{a}</span></div>)}</div> : <div className="empty-state"><CheckCircle2 size={25}/><b>No active alerts</b><span>Current readings do not trigger configured demo rules.</span></div>}
-          </Panel>
-        </div>
-      </section>
+      <section className="page">{pageContent()}</section>
       <footer className="footer">AquaPredict · Numerical Methods Project <span>Demo data only — not for operational dam control</span></footer>
     </main>
   </div>
@@ -133,4 +155,51 @@ function Metric({ label, value, unit, icon: Icon, tone = 'blue', note }: any) {
 }
 function Panel({ title, subtitle, children, extra }: any) {
   return <div className="panel"><div className="panel-head"><div><h3>{title}</h3>{subtitle && <p>{subtitle}</p>}</div>{extra}</div>{children}</div>
+}
+function Overview({ currentLevel, storage, latest, chartData, prediction, alerts, onRun, busy }: any) {
+  return <>
+    <PageHeading eyebrow="LIVE SIMULATION OVERVIEW" title="Reservoir overview" desc="A consolidated view of water levels, flow rates and calculated trends."
+      action={<button className="primary-btn" onClick={onRun} disabled={busy}><Play size={16}/>{busy ? 'Calculating…' : 'Run calculations'}</button>}/>
+    <div className="metric-grid">
+      <Metric label="Current water level" value={currentLevel.toFixed(2)} unit="m" icon={Waves} note="Latest known measurement"/>
+      <Metric label="Storage indicator" value={storage.toFixed(1)} unit="%" icon={Droplets} tone="teal" note="Illustrative 60 m reference"/>
+      <Metric label="Inflow rate" value={latest.inflow_m3s.toFixed(1)} unit="m³/s" icon={Activity} tone="green" note="Latest supplied reading"/>
+      <Metric label="Outflow rate" value={latest.outflow_m3s.toFixed(1)} unit="m³/s" icon={TrendingUp} tone="amber" note="Latest supplied reading"/>
+    </div>
+    <div className="grid-two">
+      <Panel title="Water level history" subtitle="Recorded readings; gaps remain visible">
+        <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="#e7edf2"/><XAxis dataKey="time"/><YAxis/><Tooltip/><Line dataKey="level" name="Water level (m)" stroke="#1686a5" strokeWidth={3} connectNulls={false} dot={{r:4}}/></LineChart></ResponsiveContainer></div>
+      </Panel>
+      <Panel title="Inflow vs outflow" subtitle="Flow rates in cubic metres per second">
+        <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="#e7edf2"/><XAxis dataKey="time"/><YAxis/><Tooltip/><Legend/><Bar dataKey="inflow" name="Inflow" fill="#159b8b" radius={[5,5,0,0]}/><Bar dataKey="outflow" name="Outflow" fill="#e4a34b" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></div>
+      </Panel>
+    </div>
+    <div className="grid-two">
+      <Panel title="Reservoir storage indicator" subtitle="Illustrative visual indicator; configure real capacity data for deployment">
+        <div className="storage-layout"><div className="tank"><div className="tank-water" style={{height:`${storage}%`}}/><span>{storage.toFixed(0)}%</span></div><div><div className="big-number">{currentLevel.toFixed(2)} m</div><p className="muted">Latest known water level</p><div className="legend-line"><i className="dot teal-dot"/> Simulated reservoir level</div></div></div>
+      </Panel>
+      <Panel title="System alerts" subtitle="Generated from the current dataset">
+        {alerts.length ? <div className="alert-list">{alerts.slice(0,4).map((a:string,i:number)=><div className="alert-row" key={i}><AlertTriangle size={17}/><span>{a}</span></div>)}</div> : <div className="empty-state"><CheckCircle2 size={25}/><b>No active alerts</b><span>Current readings do not trigger configured demo rules.</span></div>}
+      </Panel>
+    </div>
+  </>
+}
+function DataPage({ readings, onChange, onAdd, onImport, onExport }: any) {
+  return <>
+    <PageHeading eyebrow="DATA MANAGEMENT" title="Reservoir readings" desc="Add observations, import a CSV file and mark missing level values for interpolation."
+      action={<><label className="secondary-btn file-btn"><Upload size={16}/>Import CSV<input type="file" accept=".csv,text/csv" onChange={e => onImport(e.target.files?.[0])}/></label><button className="primary-btn" onClick={onAdd}><Plus size={16}/>Add reading</button></>}/>
+    <Panel title="Measurement dataset" subtitle="Time is measured in hours from the start of the simulation. Flow rates use m³/s.">
+      <div className="table-scroll"><table><thead><tr><th>Time (hours)</th><th>Water level (m)</th><th>Inflow (m³/s)</th><th>Outflow (m³/s)</th><th>Data status</th></tr></thead><tbody>
+        {readings.map((r:Reading,i:number)=><tr key={i}>
+          <td><input className="cell-input" type="number" min="0" value={r.time_hours} onChange={e=>onChange(i,'time_hours',e.target.value)}/></td>
+          <td><input className="cell-input" type="number" step="any" placeholder="Missing" value={r.level_m ?? ''} onChange={e=>onChange(i,'level_m',e.target.value)}/></td>
+          <td><input className="cell-input" type="number" min="0" step="any" value={r.inflow_m3s} onChange={e=>onChange(i,'inflow_m3s',e.target.value)}/></td>
+          <td><input className="cell-input" type="number" min="0" step="any" value={r.outflow_m3s} onChange={e=>onChange(i,'outflow_m3s',e.target.value)}/></td>
+          <td>{r.level_m === null ? <span className="tag warning">Missing level</span> : <span className="tag success">Recorded</span>}</td>
+        </tr>)}
+      </tbody></table></div>
+      <div className="panel-actions"><span className="muted">{readings.length} readings · Blank level values are allowed for interpolation.</span><button className="secondary-btn" onClick={onExport}><Download size={15}/>Export CSV</button></div>
+    </Panel>
+    <div className="info-box"><AlertTriangle size={18}/><div><b>Data validation note</b><p>Times must be unique and ordered for calculations. Inflow and outflow must be non-negative. At least two readings are needed for interpolation and integration.</p></div></div>
+  </>
 }
