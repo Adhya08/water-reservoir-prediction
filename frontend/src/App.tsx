@@ -3,6 +3,10 @@ import {
   LayoutDashboard, Database, TrendingUp, Calculator, ChartNoAxesCombined,
   Bell, FileText, Droplets, Play, Waves, Activity, AlertTriangle, CheckCircle2, Menu, X
 } from 'lucide-react'
+import {
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip, Legend, AreaChart, Area, BarChart, Bar
+} from 'recharts'
 
 type Reading = { time_hours: number; level_m: number | null; inflow_m3s: number; outflow_m3s: number }
 type NavKey = 'Overview' | 'Reservoir Data' | 'Prediction' | 'Numerical Methods Lab' | 'Analytics' | 'Alerts' | 'Reports'
@@ -47,6 +51,10 @@ export default function App() {
   const currentLevel = validLevels.at(-1)?.level_m ?? 0
   const latest = readings.at(-1)!
   const storage = Math.max(0, Math.min(100, currentLevel / 60 * 100))
+  const chartData = useMemo(() => readings.map(r => ({
+    time: `${r.time_hours}h`, level: r.level_m, inflow: r.inflow_m3s, outflow: r.outflow_m3s
+  })), [readings])
+
   const allAlerts = [
     ...(currentLevel < 20 ? ['Water level is below the configured minimum threshold.'] : []),
     ...(currentLevel > 55 ? ['Water level is approaching the configured maximum threshold.'] : []),
@@ -94,6 +102,14 @@ export default function App() {
           <Metric label="Storage indicator" value={storage.toFixed(1)} unit="%" icon={Droplets} tone="teal" note="Illustrative 60 m reference"/>
           <Metric label="Inflow rate" value={latest.inflow_m3s.toFixed(1)} unit="m³/s" icon={Activity} tone="green" note="Latest supplied reading"/>
           <Metric label="Outflow rate" value={latest.outflow_m3s.toFixed(1)} unit="m³/s" icon={TrendingUp} tone="amber" note="Latest supplied reading"/>
+        </div>
+        <div className="grid-two">
+          <Panel title="Water level history" subtitle="Recorded readings; gaps remain visible">
+            <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="#e7edf2"/><XAxis dataKey="time"/><YAxis/><Tooltip/><Line dataKey="level" name="Water level (m)" stroke="#1686a5" strokeWidth={3} connectNulls={false} dot={{r:4}}/></LineChart></ResponsiveContainer></div>
+          </Panel>
+          <Panel title="Inflow vs outflow" subtitle="Flow rates in cubic metres per second">
+            <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="#e7edf2"/><XAxis dataKey="time"/><YAxis/><Tooltip/><Legend/><Bar dataKey="inflow" name="Inflow" fill="#159b8b" radius={[5,5,0,0]}/><Bar dataKey="outflow" name="Outflow" fill="#e4a34b" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></div>
+          </Panel>
         </div>
         <div className="grid-two">
           <Panel title="Reservoir storage indicator" subtitle="Illustrative visual indicator; configure real capacity data for deployment">
