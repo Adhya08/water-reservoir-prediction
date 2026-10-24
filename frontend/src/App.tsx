@@ -54,6 +54,7 @@ export default function App() {
   const [prediction, setPrediction] = useState<any>(null)
   const [interpolation, setInterpolation] = useState<any>(null)
   const [integration, setIntegration] = useState<any>(null)
+  const [errors, setErrors] = useState<any>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [tab, setTab] = useState<'rk4' | 'integration' | 'interpolation'>('rk4')
@@ -66,7 +67,7 @@ export default function App() {
   const chartData = useMemo(() => readings.map(r => ({
     time: `${r.time_hours}h`, level: r.level_m, inflow: r.inflow_m3s, outflow: r.outflow_m3s
   })), [readings])
-
+  const predictedData = prediction?.results?.map((r: any) => ({ time: `${r.time_hours.toFixed(1)}h`, predicted: r.level_m })) ?? []
   const allAlerts = [
     ...(currentLevel < 20 ? ['Water level is below the configured minimum threshold.'] : []),
     ...(currentLevel > 55 ? ['Water level is approaching the configured maximum threshold.'] : []),
@@ -121,13 +122,30 @@ export default function App() {
     downloadFile('aquapredict-readings.csv', rows.join('\n'))
   }
 
+  async function runErrorAnalysis() {
+    if (!prediction) { setMessage('Run a prediction first.'); return }
+    const pairs = prediction.results.filter((p: any) => {
+      const match = readings.find(r => Math.abs(r.time_hours - p.time_hours) < 1e-6 && r.level_m !== null)
+      return !!match
+    }).map((p: any) => ({
+      time_hours: p.time_hours,
+      actual_m: readings.find(r => Math.abs(r.time_hours - p.time_hours) < 1e-6)!.level_m,
+      predicted_m: p.level_m
+    }))
+    if (!pairs.length) { setMessage('No matching actual readings at prediction timestamps. Add actual readings at those times to calculate error.'); return }
+    try { setErrors(await api('/error-analysis', { pairs })); setMessage('Error analysis completed.') }
+    catch (e: any) { setMessage(e.message) }
+  }
+
   const title = active
   const pageContent = () => {
     if (active === 'Overview') return <Overview currentLevel={currentLevel} storage={storage} latest={latest} chartData={chartData} prediction={prediction} alerts={allAlerts} onRun={runAll} busy={busy} />
     if (active === 'Reservoir Data') return <DataPage readings={readings} onChange={updateReading} onAdd={addReading} onImport={importCsv} onExport={exportReadings} />
     if (active === 'Prediction') return <PredictionPage area={area} setArea={setArea} duration={duration} setDuration={setDuration} step={step} setStep={setStep} onRun={runAll} busy={busy} prediction={prediction} />
     if (active === 'Numerical Methods Lab') return <MethodsPage tab={tab} setTab={setTab} prediction={prediction} interpolation={interpolation} integration={integration} onRun={runAll} busy={busy} />
-    return <div className="empty-state">Module under development.</div>
+    if (active === 'Analytics') return <AnalyticsPage chartData={chartData} prediction={prediction} errors={errors} onError={runErrorAnalysis} />
+    if (active === 'Alerts') return <AlertsPage alerts={allAlerts} currentLevel={currentLevel} />
+    return <ReportsPage readings={readings} prediction={prediction} integration={integration} interpolation={interpolation} onCsv={exportReadings} />
   }
 
   return <div className="app-shell">
@@ -241,5 +259,41 @@ function MethodsPage({ tab, setTab, prediction, interpolation, integration, onRu
     {tab==='rk4' && <><Panel title="Runge–Kutta Fourth Order" subtitle="Solves dh/dt = 3600(Qin − Qout)/A when time is in hours"><div className="equation">hₙ₊₁ = hₙ + Δt/6 (k₁ + 2k₂ + 2k₃ + k₄)</div><p className="muted">Each RK4 step evaluates four intermediate slopes. The flow values at intermediate times are obtained by linear interpolation of the supplied inflow/outflow readings.</p>{prediction ? <div className="table-scroll"><table><thead><tr><th>Time (h)</th><th>Predicted level (m)</th><th>k1</th><th>k2</th><th>k3</th><th>k4</th></tr></thead><tbody>{prediction.results.slice(1,9).map((r:any,i:number)=><tr key={i}><td>{r.time_hours}</td><td>{r.level_m.toFixed(5)}</td><td>{r.k_values.k1.toFixed(5)}</td><td>{r.k_values.k2.toFixed(5)}</td><td>{r.k_values.k3.toFixed(5)}</td><td>{r.k_values.k4.toFixed(5)}</td></tr>)}</tbody></table></div> : <div className="empty-state">Run a prediction to view RK4 iterations.</div>}</Panel></>}
     {tab==='integration' && <><Panel title="Composite trapezoidal rule" subtitle="Approximates cumulative flow volume over the observation period"><div className="equation">∫ f(t) dt ≈ Σ (Δtᵢ / 2)(fᵢ + fᵢ₊₁)</div>{integration ? <><div className="metric-grid three"><Metric label="Total inflow" value={integration.total_inflow_m3.toLocaleString()} unit="m³" icon={Waves}/><Metric label="Total outflow" value={integration.total_outflow_m3.toLocaleString()} unit="m³" icon={Activity} tone="amber"/><Metric label="Net volume change" value={integration.net_volume_change_m3.toLocaleString()} unit="m³" icon={TrendingUp} tone="teal"/></div><div className="table-scroll"><table><thead><tr><th>Interval</th><th>Inflow volume (m³)</th><th>Outflow volume (m³)</th></tr></thead><tbody>{integration.intervals.map((r:any,i:number)=><tr key={i}><td>{r.from_hours}–{r.to_hours} h</td><td>{r.inflow_volume_m3.toLocaleString()}</td><td>{r.outflow_volume_m3.toLocaleString()}</td></tr>)}</tbody></table></div></> : <div className="empty-state">Run calculations to view integration results.</div>}</Panel></>}
     {tab==='interpolation' && <><Panel title="Linear interpolation" subtitle="Estimates a missing level between two known observations"><div className="equation">y = y₁ + [(x − x₁)/(x₂ − x₁)](y₂ − y₁)</div>{interpolation ? <div className="table-scroll"><table><thead><tr><th>Time (h)</th><th>Original level (m)</th><th>Result (m)</th><th>Type</th></tr></thead><tbody>{interpolation.results.map((r:any,i:number)=><tr key={i}><td>{r.time_hours}</td><td>{r.original_level_m ?? '—'}</td><td>{r.level_m.toFixed(4)}</td><td>{r.estimated?<span className="tag warning">Estimated</span>:<span className="tag success">Observed</span>}</td></tr>)}</tbody></table></div> : <div className="empty-state">Run calculations to estimate missing readings.</div>}</Panel></>}
+  </>
+}
+function AnalyticsPage({ chartData, prediction, errors, onError }: any) {
+  return <>
+    <PageHeading eyebrow="PERFORMANCE & TRENDS" title="Analytics and error analysis" desc="Compare observed data with model outputs and inspect reservoir trends." action={<button className="primary-btn" onClick={onError}>Calculate prediction error</button>}/>
+    <Panel title="Historical water-level trend" subtitle="Missing observations are left blank"><div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="#e7edf2"/><XAxis dataKey="time"/><YAxis/><Tooltip/><Area dataKey="level" name="Observed level (m)" stroke="#1686a5" fill="#d9f0f4" connectNulls={false}/></AreaChart></ResponsiveContainer></div></Panel>
+    {errors && <><div className="metric-grid two"><Metric label="Mean absolute error" value={errors.mean_absolute_error_m} unit="m" icon={Activity}/><Metric label="Mean percentage error" value={errors.mean_percentage_error ?? 'N/A'} unit="%" icon={ChartNoAxesCombined} tone="teal"/></div><Panel title="Actual vs predicted comparison" subtitle="Error is calculated only where matching actual measurements exist"><div className="table-scroll"><table><thead><tr><th>Time (h)</th><th>Actual (m)</th><th>Predicted (m)</th><th>Absolute error (m)</th><th>Percentage error</th></tr></thead><tbody>{errors.results.map((r:any,i:number)=><tr key={i}><td>{r.time_hours}</td><td>{r.actual_m}</td><td>{r.predicted_m.toFixed(4)}</td><td>{r.absolute_error_m}</td><td>{r.percentage_error ?? 'N/A'}</td></tr>)}</tbody></table></div></Panel></>}
+    {!prediction && <div className="info-box"><AlertTriangle size={18}/><div><b>Prediction required</b><p>Run a prediction first. To calculate error, you also need actual readings at matching timestamps.</p></div></div>}
+  </>
+}
+function AlertsPage({ alerts, currentLevel }: any) {
+  return <>
+    <PageHeading eyebrow="THRESHOLD MONITORING" title="Alerts and warnings" desc="Rule-based alerts generated from the current reservoir dataset."/>
+    <div className="metric-grid two"><Metric label="Latest known level" value={currentLevel.toFixed(2)} unit="m" icon={Waves}/><Metric label="Active alerts" value={alerts.length} unit="" icon={Bell} tone={alerts.length?'amber':'green'}/></div>
+    <Panel title="Current alert feed" subtitle="Demo thresholds: low below 20 m and high above 55 m">
+      {alerts.length ? <div className="alert-list">{alerts.map((a:string,i:number)=><div className="alert-row large" key={i}><AlertTriangle size={19}/><div><b>{a}</b><small>Generated from current input data</small></div></div>)}</div> : <div className="empty-state"><CheckCircle2 size={28}/><b>No active alerts</b><span>No configured demo conditions are currently triggered.</span></div>}
+    </Panel>
+    <div className="info-box"><AlertTriangle size={18}/><div><b>Prototype limitation</b><p>Alerts are rule-based and evaluated from entered or simulated readings. They are not connected to a physical sensor or emergency warning service.</p></div></div>
+  </>
+}
+function ReportsPage({ readings, prediction, integration, interpolation, onCsv }: any) {
+  function exportSummary() {
+    const lines = ['AquaPredict Simulation Report', `Generated: ${new Date().toLocaleString()}`, '',
+      `Readings: ${readings.length}`, `Prediction available: ${prediction ? 'Yes' : 'No'}`,
+      `Integration available: ${integration ? 'Yes' : 'No'}`, `Interpolation available: ${interpolation ? 'Yes' : 'No'}`, '',
+      'time_hours,level_m,inflow_m3s,outflow_m3s',
+      ...readings.map((r:Reading)=>`${r.time_hours},${r.level_m ?? ''},${r.inflow_m3s},${r.outflow_m3s}`)]
+    downloadFile('aquapredict-report.txt', lines.join('\n'), 'text/plain')
+  }
+  return <>
+    <PageHeading eyebrow="EXPORT CENTER" title="Reports and exports" desc="Download reservoir readings and a summary of the current calculation session."/>
+    <div className="grid-two">
+      <Panel title="Reservoir readings" subtitle="Export the current input dataset"><div className="report-card"><Database size={28}/><div><b>Readings CSV</b><p>Time, level, inflow and outflow values.</p></div><button className="secondary-btn" onClick={onCsv}><Download size={15}/>CSV</button></div></Panel>
+      <Panel title="Simulation summary" subtitle="Export current session details"><div className="report-card"><FileText size={28}/><div><b>Project report</b><p>Dataset and calculation availability summary.</p></div><button className="primary-btn" onClick={exportSummary}><Download size={15}/>Export</button></div></Panel>
+    </div>
+    <div className="info-box"><AlertTriangle size={18}/><div><b>PDF export</b><p>This starter currently exports CSV and text summaries. PDF report generation can be added as a next enhancement using a Python PDF library.</p></div></div>
   </>
 }
