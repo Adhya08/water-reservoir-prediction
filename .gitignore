@@ -30,6 +30,7 @@ node_modules/
 dist/
 dist-ssr/
 *.local
+*.tsbuildinfo
 
 # IDE & OS
 .vscode/

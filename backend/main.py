@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import math
@@ -8,11 +8,13 @@ app = FastAPI(title="AquaPredict API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+router = APIRouter()
 
 class Reading(BaseModel):
     time_hours: float = Field(ge=0)
@@ -76,15 +78,15 @@ def rk4_step(t, h, dt, area, inflow_points, outflow_points):
     next_h = h + (dt/6.0) * (k1 + 2*k2 + 2*k3 + k4)
     return next_h, {"k1": k1, "k2": k2, "k3": k3, "k4": k4}
 
-@app.get("/")
+@router.get("/")
 def root():
     return {"message": "AquaPredict API is running"}
 
-@app.get("/health")
+@router.get("/health")
 def health():
     return {"status": "ok"}
 
-@app.post("/interpolate")
+@router.post("/interpolate")
 def interpolate(req: InterpolationRequest):
     rows = sorted_readings(req.readings)
     known = [(r.time_hours, r.level_m) for r in rows if r.level_m is not None]
@@ -105,7 +107,7 @@ def interpolate(req: InterpolationRequest):
         })
     return {"results": output, "method": "Linear interpolation"}
 
-@app.post("/integrate")
+@router.post("/integrate")
 def integrate(req: IntegrationRequest):
     rows = sorted_readings(req.readings)
     total_in = 0.0
@@ -132,7 +134,7 @@ def integrate(req: IntegrationRequest):
         "intervals": intervals
     }
 
-@app.post("/simulate")
+@router.post("/simulate")
 def simulate(req: SimulationRequest):
     rows = sorted_readings(req.readings)
     start = rows[0].time_hours
@@ -164,7 +166,7 @@ def simulate(req: SimulationRequest):
         "results": results
     }
 
-@app.post("/error-analysis")
+@router.post("/error-analysis")
 def error_analysis(req: ErrorRequest):
     if not req.pairs:
         raise HTTPException(status_code=400, detail="Add at least one actual/predicted pair.")
@@ -186,3 +188,6 @@ def error_analysis(req: ErrorRequest):
         "mean_absolute_error_m": round(mean_abs, 6),
         "mean_percentage_error": None if not valid_pct else round(sum(valid_pct)/len(valid_pct), 4)
     }
+
+app.include_router(router)
+app.include_router(router, prefix="/api")

@@ -11,7 +11,7 @@ import {
 
 type Reading = { time_hours: number; level_m: number | null; inflow_m3s: number; outflow_m3s: number }
 type NavKey = 'Overview' | 'Reservoir Data' | 'Prediction' | 'Numerical Methods Lab' | 'Analytics' | 'Alerts' | 'Reports'
-const API = 'http://localhost:8000'
+const API = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 
 const initialReadings: Reading[] = [
   { time_hours: 0, level_m: 45.0, inflow_m3s: 100, outflow_m3s: 80 },
